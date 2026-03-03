@@ -1,12 +1,18 @@
 document.addEventListener("DOMContentLoaded", () => {
   // DOM elements
   const activitiesList = document.getElementById("activities-list");
+  const calendarView = document.getElementById("calendar-view");
   const messageDiv = document.getElementById("message");
   const registrationModal = document.getElementById("registration-modal");
   const modalActivityName = document.getElementById("modal-activity-name");
   const signupForm = document.getElementById("signup-form");
   const activityInput = document.getElementById("activity");
   const closeRegistrationModal = document.querySelector(".close-modal");
+
+  // View toggle elements
+  const viewToggleButtons = document.querySelectorAll(".view-toggle-button");
+  const viewToggleCards = document.getElementById("view-toggle-cards");
+  const viewToggleCalendar = document.getElementById("view-toggle-calendar");
 
   // Search and filter elements
   const searchInput = document.getElementById("activity-search");
@@ -40,6 +46,7 @@ document.addEventListener("DOMContentLoaded", () => {
   let searchQuery = "";
   let currentDay = "";
   let currentTimeRange = "";
+  let currentViewMode = "cards"; // "cards" or "calendar"
 
   // Authentication state
   let currentUser = null;
@@ -411,8 +418,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Function to display filtered activities
   function displayFilteredActivities() {
-    // Clear the activities list
+    // Clear both views
     activitiesList.innerHTML = "";
+    calendarView.innerHTML = "";
 
     // Apply client-side filtering - this handles category filter and search, plus weekend filter
     let filteredActivities = {};
@@ -457,19 +465,37 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Check if there are any results
     if (Object.keys(filteredActivities).length === 0) {
-      activitiesList.innerHTML = `
+      const noResultsMessage = `
         <div class="no-results">
           <h4>No activities found</h4>
           <p>Try adjusting your search or filter criteria</p>
         </div>
       `;
+
+      if (currentViewMode === "cards") {
+        activitiesList.innerHTML = noResultsMessage;
+        activitiesList.classList.remove("hidden");
+        calendarView.classList.add("hidden");
+      } else {
+        calendarView.innerHTML = noResultsMessage;
+        calendarView.classList.remove("hidden");
+        activitiesList.classList.add("hidden");
+      }
       return;
     }
 
-    // Display filtered activities
-    Object.entries(filteredActivities).forEach(([name, details]) => {
-      renderActivityCard(name, details);
-    });
+    // Display filtered activities based on view mode
+    if (currentViewMode === "cards") {
+      activitiesList.classList.remove("hidden");
+      calendarView.classList.add("hidden");
+      Object.entries(filteredActivities).forEach(([name, details]) => {
+        renderActivityCard(name, details);
+      });
+    } else {
+      activitiesList.classList.add("hidden");
+      calendarView.classList.remove("hidden");
+      renderCalendarView(filteredActivities);
+    }
   }
 
   // Function to render a single activity card
@@ -860,6 +886,186 @@ document.addEventListener("DOMContentLoaded", () => {
     setDayFilter,
     setTimeRangeFilter,
   };
+
+  // View toggle event listeners
+  viewToggleButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      const viewMode = button.dataset.view;
+
+      // Update active class
+      viewToggleButtons.forEach((btn) => btn.classList.remove("active"));
+      button.classList.add("active");
+
+      // Update current view mode
+      currentViewMode = viewMode;
+
+      // Re-display activities in the new view
+      displayFilteredActivities();
+    });
+  });
+
+  // Function to render calendar view
+  function renderCalendarView(activities) {
+    const daysOfWeek = [
+      "Sunday",
+      "Monday",
+      "Tuesday",
+      "Wednesday",
+      "Thursday",
+      "Friday",
+      "Saturday",
+    ];
+
+    // Time slots from 6 AM to 9 PM (school schedule)
+    const timeSlots = [];
+    for (let hour = 6; hour <= 21; hour++) {
+      const displayHour = hour % 12 || 12;
+      const period = hour >= 12 ? "PM" : "AM";
+      timeSlots.push({
+        time24: `${hour.toString().padStart(2, "0")}:00`,
+        display: `${displayHour}:00 ${period}`,
+      });
+    }
+
+    // Create calendar container
+    const calendarContainer = document.createElement("div");
+    calendarContainer.className = "calendar-container";
+
+    // Add header row
+    const timeHeader = document.createElement("div");
+    timeHeader.className = "calendar-header time-column";
+    timeHeader.textContent = "Time";
+    calendarContainer.appendChild(timeHeader);
+
+    daysOfWeek.forEach((day) => {
+      const dayHeader = document.createElement("div");
+      dayHeader.className = "calendar-header";
+      dayHeader.textContent = day;
+      calendarContainer.appendChild(dayHeader);
+    });
+
+    // Add time slots and day columns
+    timeSlots.forEach((slot, slotIndex) => {
+      // Time column
+      const timeCell = document.createElement("div");
+      timeCell.className = "calendar-time-slot";
+      timeCell.textContent = slot.display;
+      calendarContainer.appendChild(timeCell);
+
+      // Day columns
+      daysOfWeek.forEach((day) => {
+        const dayCell = document.createElement("div");
+        dayCell.className = "calendar-day-column";
+        dayCell.dataset.day = day;
+        dayCell.dataset.time = slot.time24;
+
+        // Find activities for this day and time slot
+        const activitiesInSlot = [];
+        Object.entries(activities).forEach(([name, details]) => {
+          if (!details.schedule_details) return;
+
+          const activityDays = details.schedule_details.days;
+          const startTime = details.schedule_details.start_time;
+          const endTime = details.schedule_details.end_time;
+
+          // Check if activity is on this day
+          if (activityDays.includes(day)) {
+            // Check if activity time overlaps with this slot
+            const slotStart = parseTimeToMinutes(slot.time24);
+            const slotEnd =
+              slotIndex < timeSlots.length - 1
+                ? parseTimeToMinutes(timeSlots[slotIndex + 1].time24)
+                : slotStart + 60;
+            const activityStart = parseTimeToMinutes(startTime);
+            const activityEnd = parseTimeToMinutes(endTime);
+
+            // Activity overlaps if it starts before slot ends and ends after slot starts
+            if (activityStart < slotEnd && activityEnd > slotStart) {
+              activitiesInSlot.push({ name, details });
+            }
+          }
+        });
+
+        // Render activities in this slot
+        if (activitiesInSlot.length > 0) {
+          activitiesInSlot.forEach((activity, index) => {
+            const activityElement = createCalendarActivityElement(
+              activity.name,
+              activity.details,
+              activitiesInSlot.length,
+              index
+            );
+            dayCell.appendChild(activityElement);
+          });
+        }
+
+        calendarContainer.appendChild(dayCell);
+      });
+    });
+
+    calendarView.appendChild(calendarContainer);
+  }
+
+  // Helper function to parse time string to minutes
+  function parseTimeToMinutes(timeStr) {
+    const [hours, minutes] = timeStr.split(":").map(Number);
+    return hours * 60 + minutes;
+  }
+
+  // Function to create calendar activity element
+  function createCalendarActivityElement(name, details, totalInSlot, index) {
+    const activityEl = document.createElement("div");
+    activityEl.className = "calendar-activity";
+
+    // Get activity type for color
+    const activityType = getActivityType(name, details.description);
+    const typeInfo = activityTypes[activityType];
+
+    // Style the activity with category color
+    activityEl.style.borderColor = typeInfo.textColor;
+    activityEl.style.backgroundColor = typeInfo.color;
+
+    // Calculate position for overlapping activities
+    if (totalInSlot > 1) {
+      const width = 100 / totalInSlot;
+      activityEl.style.left = `${width * index}%`;
+      activityEl.style.width = `${width - 1}%`;
+      activityEl.style.right = "auto";
+    }
+
+    // Calculate height based on activity duration
+    const startMinutes = parseTimeToMinutes(details.schedule_details.start_time);
+    const endMinutes = parseTimeToMinutes(details.schedule_details.end_time);
+    const durationMinutes = endMinutes - startMinutes;
+    const heightPercentage = (durationMinutes / 60) * 100;
+    activityEl.style.height = `${heightPercentage}%`;
+
+    // Calculate top position based on start time within the hour
+    const hourStart = Math.floor(startMinutes / 60) * 60;
+    const minutesIntoHour = startMinutes - hourStart;
+    const topPercentage = (minutesIntoHour / 60) * 100;
+    activityEl.style.top = `${topPercentage}%`;
+
+    // Calculate enrollment
+    const totalSpots = details.max_participants;
+    const takenSpots = details.participants.length;
+
+    // Activity content
+    activityEl.innerHTML = `
+      <div class="calendar-activity-name">${name}</div>
+      <div class="calendar-activity-enrollment">${takenSpots}/${totalSpots} enrolled</div>
+      <div class="calendar-activity-tooltip">
+        <div class="calendar-activity-tooltip-title">${name}</div>
+        <div class="calendar-activity-tooltip-content">
+          <p><strong>Description:</strong> ${details.description}</p>
+          <p><strong>Schedule:</strong> ${formatSchedule(details)}</p>
+          <p><strong>Capacity:</strong> ${takenSpots}/${totalSpots} enrolled</p>
+        </div>
+      </div>
+    `;
+
+    return activityEl;
+  }
 
   // Initialize app
   checkAuthentication();
